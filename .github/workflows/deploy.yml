@@ -1,0 +1,46 @@
+name: Docker Deployment Health Check
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t rollback-app:new .
+
+      - name: Run application
+        run: |
+          docker rm -f rollback-app || true
+          docker run -d --name rollback-app -p 9095:80 rollback-app:new
+
+      - name: Health Check
+        run: |
+          for i in 1 2 3 4 5
+          do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9095)
+            echo "Health check $i: HTTP $STATUS"
+
+            if [ "$STATUS" = "200" ]; then
+              exit 0
+            fi
+
+            sleep 3
+          done
+
+          exit 1
+
+      - name: Rollback
+        if: failure()
+        run: |
+          echo "Health check failed. Starting rollback..."
+          docker rm -f rollback-app || true
+          docker run -d --name rollback-app -p 9095:80 rollback-app:v1
+          echo "Rollback completed."
