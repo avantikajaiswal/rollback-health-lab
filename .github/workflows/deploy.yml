@@ -9,12 +9,28 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      packages: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Login to GitHub Container Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
+            -u "${{ github.actor }}" \
+            --password-stdin
+
       - name: Build Docker image
-        run: docker build -t rollback-app:new .
+        run: |
+          docker build -t rollback-app:new .
+          docker tag rollback-app:new ghcr.io/${{ github.repository_owner }}/rollback-health-lab:v1
+
+      - name: Push stable image
+        run: |
+          docker push ghcr.io/${{ github.repository_owner }}/rollback-health-lab:v1
 
       - name: Run application
         run: |
@@ -29,12 +45,14 @@ jobs:
             echo "Health check $i: HTTP $STATUS"
 
             if [ "$STATUS" = "200" ]; then
+              echo "Health check passed."
               exit 0
             fi
 
             sleep 3
           done
 
+          echo "Health check failed."
           exit 1
 
       - name: Rollback
@@ -42,5 +60,7 @@ jobs:
         run: |
           echo "Health check failed. Starting rollback..."
           docker rm -f rollback-app || true
-          docker run -d --name rollback-app -p 9095:80 rollback-app:v1
+          docker pull ghcr.io/${{ github.repository_owner }}/rollback-health-lab:v1
+          docker run -d --name rollback-app -p 9095:80 \
+            ghcr.io/${{ github.repository_owner }}/rollback-health-lab:v1
           echo "Rollback completed."
